@@ -1,5 +1,3 @@
-# gophish-installer
-
 # Gophish Auto Installer Script
 
 A bash script to automatically download, configure, and install [Gophish](https://getgophish.com/) phishing framework on Linux systems.  
@@ -47,5 +45,6 @@ Check firewall rules allow traffic on chosen ports
 
 Review ~/gophish-install.log and /opt/gophish/gophish.log for error details
 
-#Disclaimer
+# Disclaimer
+
 Use this tool responsibly and only on systems you own or have explicit permission to test.
