@@ -1,5 +1,6 @@
 #!/bin/bash
-set -e
+set -euo pipefail
+
 log() {
     echo "[*] $1"
 }
@@ -7,14 +8,13 @@ fail() {
     echo "[✗] $1"
     exit 1
 }
-
+warning() { echo -e "[⚠️] $*"; }
 success() {
-    echo "[✓] $1"
+    echo "[✅] $1"
 }
 
 exec > >(tee -a gophish-install.log) 2>&1
 
-#Checking for for prerequisites
 __prerequisites_and_install() {
     local package="$1"
     log "Checking if $package is installed ..."
@@ -89,7 +89,7 @@ __getting_gophish() {
 
     success "Gophish Added to $__INSTALLATION_FOLDER"
     sleep 2s
-    printf "Starting Configuration ...\n 📦 ====================================== \n"
+    printf "Starting Configuration ...\n\n\n====================================== \n\n\n"
 }
 
 __generate_cert() {
@@ -97,36 +97,37 @@ __generate_cert() {
         read -rp "Do you want to generate an SSL certificate now? (Y/N): " answer
         case "$answer" in
         [Yy])
-            log "Let's generate an SSL/TLS certificate using Certbot"
+            log "Let's generate an SSL/TLS certificate using Certbot."
 
-            read -rp "🌐 Enter your domain name (e.g., hali-cybers.online): " __DOMAIN
+            read -rp "Enter your domain name (e.g., hali.online): " __DOMAIN
 
-            log "You’ll now complete a DNS challenge manually."
+            log "You’ll now complete a DNS-01 challenge manually."
             log "Certbot will prompt you to add a TXT record to your DNS settings."
-            log "Make sure you can access your DNS provider's control panel."
+            log "Make sure you have access to your DNS provider (e.g. Namecheap, Cloudflare)."
 
-            read -rp "⚠️  Press Enter to continue or Ctrl+C to cancel..."
+            read -rp "Press Enter to begin Certbot or Ctrl+C to cancel..."
 
             sudo certbot certonly \
                 --manual \
                 --preferred-challenges dns \
+                --manual-public-ip-logging-ok \
                 --register-unsafely-without-email \
-                -d "$__DOMAIN" || fail "Certbot failed to generate certificate."
+                --agree-tos \
+                -d "$__DOMAIN"
 
             local cert_path="/etc/letsencrypt/live/$__DOMAIN/fullchain.pem"
             local key_path="/etc/letsencrypt/live/$__DOMAIN/privkey.pem"
 
             if [[ -f "$cert_path" && -f "$key_path" ]]; then
                 success "Certificate successfully created!"
-                log "Cert Path : $cert_path"
-                log "Key Path  : $key_path"
+                log "ert Path: $cert_path"
+                log "Key Path:  $key_path"
 
                 export __CERT_PATH="$cert_path"
                 export __KEY_PATH="$key_path"
             else
-                fail "Failed to find generated certificates for domain $__DOMAIN."
+                fail "❌ Failed to find certificates for domain $__DOMAIN."
             fi
-
             break
             ;;
         [Nn])
@@ -140,53 +141,67 @@ __generate_cert() {
     done
 }
 
+__port_in_use() {
+    local PORT=$1
+    if command -v ss >/dev/null 2>&1; then
+        ss -tuln | grep -qw ":$PORT"
+        return $?
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -tuln | grep -qw ":$PORT"
+        return $?
+    else
+        echo "Can not check Port"
+        return 1
+    fi
+}
+
 __generate_gophish_config() {
-    log "Generating your custom Gophish configuration..."
+    log "Checking if default ports are available..."
 
-    read -pr "🔧 Enter Admin Server Port (Recommended ==> 3333): " ADMIN_PORT
-    read -pr "🎯 Enter Phishing Server Port (Recommended ==> 443): " PHISH_PORT
+    ADMIN_PORT=3333
+    PHISH_PORT=80
 
-    if [[ -n "$__CERT_PATH" && -n "$__KEY_PATH" ]]; then
+    if __port_in_use "$ADMIN_PORT"; then
+        warning "Port $ADMIN_PORT (Admin) is already in use!"
+        while true; do
+            read -rp "Enter a different Admin Server Port: " ADMIN_PORT
+            if ! __port_in_use "$ADMIN_PORT"; then
+                break
+            fi
+            echo "Port $ADMIN_PORT is also in use. Try another."
+        done
+    else
+        log "Admin Server will use default port $ADMIN_PORT"
+    fi
+
+    if __port_in_use "$PHISH_PORT"; then
+        warning "Port $PHISH_PORT (Phishing) is already in use!"
+        while true; do
+            read -rp "Enter a different Phishing Server Port: " PHISH_PORT
+            if ! __port_in_use "$PHISH_PORT"; then
+                break
+            fi
+            echo "Port $PHISH_PORT is also in use. Try another."
+        done
+    else
+        log "Phish Server will use default port $PHISH_PORT"
+    fi
+
+    if [[ -n "${__CERT_PATH:-}" && -n "${__KEY_PATH:-}" ]]; then
         while true; do
             read -rp "Use previously generated certificate paths for both Admin & Phish servers? (Y/N): " cert_answer
             case "$cert_answer" in
             [Yy])
-                log "Using previously generated certs from __generate_cert"
+                log "Using previously generated certs"
                 ADMIN_CERT="$__CERT_PATH"
                 ADMIN_KEY="$__KEY_PATH"
                 PHISH_CERT="$__CERT_PATH"
                 PHISH_KEY="$__KEY_PATH"
-                unset __CERT_PATH
-                unset __KEY_PATH
+                unset __CERT_PATH __KEY_PATH
                 break
                 ;;
             [Nn])
-                log "Prompting for manual input of certificate and key paths..."
-
-                while true; do
-                    read -rp "🔑 Enter path to Admin TLS certificate (e.g., fullchain.pem): " ADMIN_CERT
-                    [[ -f "$ADMIN_CERT" ]] && break
-                    echo "[✗] File not found: $ADMIN_CERT"
-                done
-
-                while true; do
-                    read -rp "🔐 Enter path to Admin TLS key (e.g., privkey.pem): " ADMIN_KEY
-                    [[ -f "$ADMIN_KEY" ]] && break
-                    echo "[✗] File not found: $ADMIN_KEY"
-                done
-
-                while true; do
-                    read -rp "📜 Enter path to Phish TLS certificate (e.g., fullchain.pem): " PHISH_CERT
-                    [[ -f "$PHISH_CERT" ]] && break
-                    echo "[✗] File not found: $PHISH_CERT"
-                done
-
-                while true; do
-                    read -rp "🔐 Enter path to Phish TLS key (e.g., privkey.pem): " PHISH_KEY
-                    [[ -f "$PHISH_KEY" ]] && break
-                    echo "[✗] File not found: $PHISH_KEY"
-                done
-
+                log "Manual entry of cert/key paths..."
                 break
                 ;;
             *)
@@ -194,69 +209,97 @@ __generate_gophish_config() {
                 ;;
             esac
         done
+    fi
+
+    while [[ -z "${ADMIN_CERT+x}" ]]; do
+        read -rp "Enter path to Admin TLS certificate (leave empty to disable TLS): " ADMIN_CERT
+        if [[ -z "$ADMIN_CERT" || -f "$ADMIN_CERT" ]]; then
+            break
+        fi
+        echo "File not found: $ADMIN_CERT"
+    done
+
+    while [[ -z "${ADMIN_KEY+x}" ]]; do
+        read -rp "Enter path to Admin TLS key (leave empty to disable TLS): " ADMIN_KEY
+        if [[ -z "$ADMIN_KEY" || -f "$ADMIN_KEY" ]]; then
+            break
+        fi
+        echo "File not found: $ADMIN_KEY"
+    done
+
+    while [[ -z "${PHISH_CERT+x}" ]]; do
+        read -rp "Enter path to Phish TLS certificate (leave empty to disable TLS): " PHISH_CERT
+        if [[ -z "$PHISH_CERT" || -f "$PHISH_CERT" ]]; then
+            break
+        fi
+        echo "File not found: $PHISH_CERT"
+    done
+
+    while [[ -z "${PHISH_KEY+x}" ]]; do
+        read -rp "Enter path to Phish TLS key (leave empty to disable TLS): " PHISH_KEY
+        if [[ -z "$PHISH_KEY" || -f "$PHISH_KEY" ]]; then
+            break
+        fi
+        echo "File not found: $PHISH_KEY"
+    done
+
+    if [[ -n "$ADMIN_CERT" && -n "$ADMIN_KEY" ]]; then
+        ADMIN_USE_TLS=true
     else
-        log "No exported certificate paths found. Prompting for manual input..."
+        ADMIN_USE_TLS=false
+        ADMIN_CERT=""
+        ADMIN_KEY=""
+    fi
 
-        while true; do
-            read -rp "🔑 Enter path to Admin TLS certificate (e.g., fullchain.pem): " ADMIN_CERT
-            [[ -f "$ADMIN_CERT" ]] && break
-            echo "[✗] File not found: $ADMIN_CERT"
-        done
-
-        while true; do
-            read -rp "🔐 Enter path to Admin TLS key (e.g., privkey.pem): " ADMIN_KEY
-            [[ -f "$ADMIN_KEY" ]] && break
-            echo "[✗] File not found: $ADMIN_KEY"
-        done
-
-        while true; do
-            read -rp "📜 Enter path to Phish TLS certificate (e.g., fullchain.pem): " PHISH_CERT
-            [[ -f "$PHISH_CERT" ]] && break
-            echo "[✗] File not found: $PHISH_CERT"
-        done
-
-        while true; do
-            read -rp "🔐 Enter path to Phish TLS key (e.g., privkey.pem): " PHISH_KEY
-            [[ -f "$PHISH_KEY" ]] && break
-            echo "[✗] File not found: $PHISH_KEY"
-        done
+    if [[ -n "$PHISH_CERT" && -n "$PHISH_KEY" ]]; then
+        PHISH_USE_TLS=true
+    else
+        PHISH_USE_TLS=false
+        PHISH_CERT=""
+        PHISH_KEY=""
     fi
 
     local config_path="/opt/gophish/config.json"
 
     log "Writing configuration to $config_path..."
 
-    cat <<EOF | sudo tee "$config_path" >/dev/null
+    sudo bash -c "cat > '$config_path'" <<EOF
 {
-    "admin_server": {
-        "listen_url": "0.0.0.0:$ADMIN_PORT",
-        "use_tls": true,
-        "cert_path": "$ADMIN_CERT",
-        "key_path": "$ADMIN_KEY",
-        "trusted_origins": []
-    },
-    "phish_server": {
-        "listen_url": "0.0.0.0:$PHISH_PORT",
-        "use_tls": true,
-        "cert_path": "$PHISH_CERT",
-        "key_path": "$PHISH_KEY"
-    },
-    "db_name": "sqlite3",
-    "db_path": "gophish.db",
-    "migrations_prefix": "db/db_",
-    "contact_address": "",
-    "logging": {
-        "filename": "__logs",
-        "level": "error"
-    }
+  "admin_server": {
+    "listen_url": "0.0.0.0:$ADMIN_PORT",
+    "use_tls": $ADMIN_USE_TLS,
+    "cert_path": "$ADMIN_CERT",
+    "key_path": "$ADMIN_KEY",
+    "trusted_origins": []
+  },
+  "phish_server": {
+    "listen_url": "0.0.0.0:$PHISH_PORT",
+    "use_tls": $PHISH_USE_TLS,
+    "cert_path": "$PHISH_CERT",
+    "key_path": "$PHISH_KEY"
+  },
+  "db_name": "sqlite3",
+  "db_path": "gophish.db",
+  "migrations_prefix": "db/db_",
+  "contact_address": "",
+  "logging": {
+    "filename": "gophish.log",
+    "level": "debug"
+  }
 }
 EOF
 
-    success "Gophish config created at $config_path"
+    success "Gophish config created at: $config_path"
 }
 
 __create_gophish_service() {
-    log "Creating GoPhish systemd service ..."
+
+    log "Creating and starting GoPhish systemd service..."
+
+    sudo chmod +x /opt/gophish/gophish
+
+    sudo pkill -f "/opt/gophish/gophish" 2>/dev/null || true
+
     sudo tee /etc/systemd/system/gophish.service >/dev/null <<EOF
 [Unit]
 Description=GoPhish Phishing Framework
@@ -264,69 +307,122 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/opt/gophish/gophish >> /opt/gophish/gophish.log 2>&1
+User=root
 WorkingDirectory=/opt/gophish
-Restart=always
-User=nobady
+ExecStart=/opt/gophish/gophish
+Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
+    # Reload and start service
     sudo systemctl daemon-reexec
     sudo systemctl daemon-reload
     sudo systemctl enable gophish
-    sudo systemctl start gophish
-    success "GoPhish service created and started."
+    sudo systemctl restart gophish
+    success "GoPhish systemd service created and started."
 }
 
 __display_gophish_credentials() {
-    sleep 5
-    log "Attempting to extract admin credentials from logs..."
     local log_file="/opt/gophish/gophish.log"
+    local password=""
+    sleep 5
+    log "Everything Seems to be Okay ..."
 
     if [[ -f "$log_file" ]]; then
-        grep "Generated Admin Server" "$log_file" ||
-            grep "Please login" "$log_file" ||
-            log "GoPhish log exists, but credentials not found. Check the log manually."
+        password=$(grep -i "Please login with the username" "$log_file" |
+            sed -n 's/.*password[[:space:]]\+\([^[:space:]]\+\).*/\1/p')
+
+        if [[ -n "$password" ]]; then
+            success "🔐 Admin credentials:"
+            echo "   ➤ Username: admin"
+            echo "   ➤ Password: $password"
+        else
+            warn "Credentials not found in the log. Please check manually: $log_file"
+        fi
     else
-        log "Log file not found. Please check manually: gophish/gophish.log"
+        fail "❌ Log file not found: $log_file"
     fi
 
     echo
-    success "You can access GoPhish admin UI at: https://localhost:3333"
-    echo "⚠️  Remember to check 'gophish.log' to retrieve your random admin password!"
+    success "You can access the GoPhish admin UI at: https://localhost:3333"
+}
+
+__root-check() {
+    if [[ "$EUID" -ne 0 ]]; then
+        echo "This script must be run as root or with sudo." >&2
+        exit 1
+    fi
 }
 
 __installer() {
+    config_path="/opt/gophish/config.json"
 
     while true; do
-        read -rp "📦 Do you want to keep default configurations? [Y/N]: " __CHOICE
+        read -rp "Do you want to keep default configurations? [Y/N]: " __CHOICE
         case "$__CHOICE" in
         [Yy])
             echo "[*] Keeping default configurations."
+            sudo tee "$config_path" >/dev/null <<EOF
+{
+  "admin_server": {
+    "listen_url": "0.0.0.0:3333",
+    "use_tls": false,
+    "cert_path": "",
+    "key_path": "",
+    "trusted_origins": []
+  },
+  "phish_server": {
+    "listen_url": "0.0.0.0:80",
+    "use_tls": false,
+    "cert_path": "",
+    "key_path": ""
+  },
+  "db_name": "sqlite3",
+  "db_path": "gophish.db",
+  "migrations_prefix": "db/db_",
+  "contact_address": "",
+  "logging": {
+    "filename": "gophish.log",
+    "level": "debug"
+  }
+}
+EOF
             __create_gophish_service
             __display_gophish_credentials
             break
             ;;
         [Nn])
             echo "[*] Proceeding with custom configuration ..."
-            __generate_cert
+
+            read -rp "Do you want to generate a new TLS certificate? [Y to generate / any other key to skip]: " cert_choice
+            if [[ "$cert_choice" =~ ^[Yy]$ ]]; then
+                __generate_cert
+            else
+                log "Skipping certificate generation."
+                unset __CERT_PATH
+                unset __KEY_PATH
+            fi
+
             __generate_gophish_config
             __create_gophish_service
             __display_gophish_credentials
             break
             ;;
-        *) echo "[!] Please enter Y if yes or N if No" ;;
+        *)
+            echo "[!] Please enter Y if yes or N if No"
+            ;;
         esac
     done
-
 }
 
 __main() {
+    __root-check
     __prerequisites_and_install curl
     __prerequisites_and_install unzip
     __prerequisites_and_install certbot
+    __getting_gophish
     __installer
 }
 __main
