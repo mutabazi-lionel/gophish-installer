@@ -107,6 +107,7 @@ __generate_cert() {
 
             read -rp "Press Enter to begin Certbot or Ctrl+C to cancel..."
 
+            # Run certbot with manual DNS challenge
             sudo certbot certonly \
                 --manual \
                 --preferred-challenges dns \
@@ -115,12 +116,13 @@ __generate_cert() {
                 --agree-tos \
                 -d "$__DOMAIN"
 
+            # Check certificate files
             local cert_path="/etc/letsencrypt/live/$__DOMAIN/fullchain.pem"
             local key_path="/etc/letsencrypt/live/$__DOMAIN/privkey.pem"
 
             if [[ -f "$cert_path" && -f "$key_path" ]]; then
                 success "Certificate successfully created!"
-                log "ert Path: $cert_path"
+                log "Cert Path: $cert_path"
                 log "Key Path:  $key_path"
 
                 export __CERT_PATH="$cert_path"
