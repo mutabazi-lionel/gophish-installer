@@ -100,34 +100,55 @@ __generate_cert() {
             log "Let's generate an SSL/TLS certificate using Certbot."
 
             read -rp "Enter your domain name (e.g., hali.online): " __DOMAIN
+            [[ -n "${__DOMAIN}" ]] || {
+                echo "Domain cannot be empty."
+                continue
+            }
 
-            log "You’ll now complete a DNS-01 challenge manually."
-            log "Certbot will prompt you to add a TXT record to your DNS settings."
-            log "Make sure you have access to your DNS provider (e.g. Namecheap, Cloudflare)."
-            read -rp "Press Enter to begin Certbot or Ctrl+C to cancel..."
+            log "We will use a manual DNS-01 challenge."
+            read -rp "Press Enter to continue…"
 
-            # Run certbot once to show challenge
+            # Step 1: Check if TXT record already exists
+            existing_txt=$(dig TXT "_acme-challenge.${__DOMAIN}" +short)
+            if [[ -n "${existing_txt}" ]]; then
+                log "[*] Found existing TXT record for _acme-challenge.${__DOMAIN}: ${existing_txt}"
+                log "[*] Proceeding with Certbot validation…"
+            else
+                echo "[*] No TXT record found for _acme-challenge.${__DOMAIN}."
+                echo "[*] Certbot will show a TXT record that you need to add to your DNS zone."
+
+                # Run certbot dry-run to show the TXT record
+                certbot certonly \
+                    --manual \
+                    --preferred-challenges dns \
+                    --register-unsafely-without-email \
+                    --agree-tos \
+                    -d "${__DOMAIN}" \
+                    --manual-auth-hook /bin/true \
+                    --manual-cleanup-hook /bin/true \
+                    --dry-run || true
+
+                echo
+                read -rp "Add the TXT record above to your DNS, then press Enter to continue…"
+
+                # Step 2: Wait for DNS propagation
+                log "[*] Checking DNS propagation for _acme-challenge.${__DOMAIN}..."
+                until dig TXT "_acme-challenge.${__DOMAIN}" +short | grep -q .; do
+                    echo "[*] Waiting for DNS propagation… re-checking in 15s"
+                    sleep 15
+                done
+                log "[*] TXT record detected. Proceeding with Certbot…"
+            fi
+
+            # Step 3: Run Certbot for real
             sudo certbot certonly \
                 --manual \
                 --preferred-challenges dns \
-                --manual-public-ip-logging-ok \
                 --register-unsafely-without-email \
                 --agree-tos \
-                -d "${__DOMAIN}" \
-                --manual-auth-hook /bin/true \
-                --manual-cleanup-hook /bin/true \
-                --manual-interactive
-            # The --manual-interactive ensures you see the challenge
+                -d "${__DOMAIN}"
 
-            # Extra propagation check
-            log "Checking DNS propagation for _acme-challenge.${__DOMAIN}..."
-            until dig TXT "_acme-challenge.${__DOMAIN}" +short | grep -q .; do
-                echo "[*] Waiting for DNS propagation... re-checking in 15s"
-                sleep 15
-            done
-            log "DNS record detected. Let’s Encrypt should validate shortly..."
-
-            # Check certificate files
+            # Step 4: Check certificate files
             local cert_path="/etc/letsencrypt/live/${__DOMAIN}/fullchain.pem"
             local key_path="/etc/letsencrypt/live/${__DOMAIN}/privkey.pem"
 
