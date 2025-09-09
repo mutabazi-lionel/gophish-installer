@@ -95,7 +95,7 @@ __getting_gophish() {
 __generate_cert() {
     while true; do
         read -rp "Do you want to generate an SSL certificate now? (Y/N): " answer
-        case "$answer" in
+        case "${answer}" in
         [Yy])
             log "Let's generate an SSL/TLS certificate using Certbot."
 
@@ -104,31 +104,42 @@ __generate_cert() {
             log "You’ll now complete a DNS-01 challenge manually."
             log "Certbot will prompt you to add a TXT record to your DNS settings."
             log "Make sure you have access to your DNS provider (e.g. Namecheap, Cloudflare)."
-
             read -rp "Press Enter to begin Certbot or Ctrl+C to cancel..."
 
-            # Run certbot with manual DNS challenge
+            # Run certbot once to show challenge
             sudo certbot certonly \
                 --manual \
                 --preferred-challenges dns \
                 --manual-public-ip-logging-ok \
                 --register-unsafely-without-email \
                 --agree-tos \
-                -d "$__DOMAIN"
+                -d "${__DOMAIN}" \
+                --manual-auth-hook /bin/true \
+                --manual-cleanup-hook /bin/true \
+                --manual-interactive
+            # The --manual-interactive ensures you see the challenge
+
+            # Extra propagation check
+            log "Checking DNS propagation for _acme-challenge.${__DOMAIN}..."
+            until dig TXT "_acme-challenge.${__DOMAIN}" +short | grep -q .; do
+                echo "[*] Waiting for DNS propagation... re-checking in 15s"
+                sleep 15
+            done
+            log "DNS record detected. Let’s Encrypt should validate shortly..."
 
             # Check certificate files
-            local cert_path="/etc/letsencrypt/live/$__DOMAIN/fullchain.pem"
-            local key_path="/etc/letsencrypt/live/$__DOMAIN/privkey.pem"
+            local cert_path="/etc/letsencrypt/live/${__DOMAIN}/fullchain.pem"
+            local key_path="/etc/letsencrypt/live/${__DOMAIN}/privkey.pem"
 
-            if [[ -f "$cert_path" && -f "$key_path" ]]; then
+            if [[ -f "${cert_path}" && -f "${key_path}" ]]; then
                 success "Certificate successfully created!"
-                log "Cert Path: $cert_path"
-                log "Key Path:  $key_path"
+                log "Cert Path: ${cert_path}"
+                log "Key Path:  ${key_path}"
 
-                export __CERT_PATH="$cert_path"
-                export __KEY_PATH="$key_path"
+                export __CERT_PATH="${cert_path}"
+                export __KEY_PATH="${key_path}"
             else
-                fail "❌ Failed to find certificates for domain $__DOMAIN."
+                fail "❌ Failed to find certificates for domain ${__DOMAIN}."
             fi
             break
             ;;
