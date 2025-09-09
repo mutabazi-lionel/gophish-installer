@@ -99,6 +99,7 @@ __generate_cert() {
         [Yy])
             log "Let's generate an SSL/TLS certificate using Certbot."
 
+            # Ask for domain
             read -rp "Enter your domain name (e.g., hali.online): " __DOMAIN
             [[ -n "${__DOMAIN}" ]] || {
                 echo "Domain cannot be empty."
@@ -106,9 +107,8 @@ __generate_cert() {
             }
 
             log "We will use a manual DNS-01 challenge."
-            read -rp "Press Enter to continue…"
 
-            # Step 1: Check if TXT record already exists
+            # Check if TXT record already exists
             existing_txt=$(dig TXT "_acme-challenge.${__DOMAIN}" +short)
             if [[ -n "${existing_txt}" ]]; then
                 log "[*] Found existing TXT record for _acme-challenge.${__DOMAIN}: ${existing_txt}"
@@ -117,7 +117,7 @@ __generate_cert() {
                 echo "[*] No TXT record found for _acme-challenge.${__DOMAIN}."
                 echo "[*] Certbot will show a TXT record that you need to add to your DNS zone."
 
-                # Run certbot dry-run to show the TXT record
+                # Dry-run Certbot to display TXT record
                 certbot certonly \
                     --manual \
                     --preferred-challenges dns \
@@ -129,18 +129,19 @@ __generate_cert() {
                     --dry-run || true
 
                 echo
-                read -rp "Add the TXT record above to your DNS, then press Enter to continue…"
+                echo "[*] Add the TXT record above to your DNS."
+                echo "[*] The script will wait until the record propagates globally."
 
-                # Step 2: Wait for DNS propagation
+                # Wait for DNS propagation
                 log "[*] Checking DNS propagation for _acme-challenge.${__DOMAIN}..."
                 until dig TXT "_acme-challenge.${__DOMAIN}" +short | grep -q .; do
-                    echo "[*] Waiting for DNS propagation… re-checking in 15s"
+                    echo "[*] TXT record not detected yet. Re-checking in 15s..."
                     sleep 15
                 done
-                log "[*] TXT record detected. Proceeding with Certbot…"
+                log "[*] TXT record detected. Proceeding with Certbot validation…"
             fi
 
-            # Step 3: Run Certbot for real
+            # Run Certbot for real
             sudo certbot certonly \
                 --manual \
                 --preferred-challenges dns \
@@ -148,7 +149,7 @@ __generate_cert() {
                 --agree-tos \
                 -d "${__DOMAIN}"
 
-            # Step 4: Check certificate files
+            # Verify certificate files
             local cert_path="/etc/letsencrypt/live/${__DOMAIN}/fullchain.pem"
             local key_path="/etc/letsencrypt/live/${__DOMAIN}/privkey.pem"
 
